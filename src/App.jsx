@@ -222,27 +222,22 @@ export default function KaraokeDJ() {
           : "transparent",
         pointerEvents:"none",
       }}>
-        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-          {/* Logo su sfondo bianco, ben in risalto sul gradiente scuro */}
-          <div style={{
-            background: "#fff",
-            borderRadius: 14,
-            padding: "10px 14px",
-            boxShadow: "0 2px 10px rgba(0,0,0,.35)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}>
-            <DuoPiccheLogo size={56} />
-          </div>
+        <div style={{
+          display:"flex", alignItems:"center", gap:14,
+          background: "#fff",
+          borderRadius: 14,
+          padding: "8px 18px 8px 8px",
+          boxShadow: "0 2px 10px rgba(0,0,0,.35)",
+        }}>
+          <DuoPiccheLogo size={48} />
           <div>
             <div style={{
-              fontSize: 20, fontWeight: 800, color: "#e0a020",
-              letterSpacing: "-0.01em", textShadow: `0 0 20px #e0a02066`,
+              fontSize: 20, fontWeight: 800, color: B.gold,
+              letterSpacing: "-0.01em",
             }}>
               Duo di Picche
             </div>
-            <div style={{ fontSize: 11, color: "#ffffff55", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+            <div style={{ fontSize: 11, color: B.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>
               Karaoke Night
             </div>
           </div>
