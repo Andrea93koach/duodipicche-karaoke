@@ -1,117 +1,13 @@
-import { useState, useRef, useEffect } from "react";
-import logoUrl from "./assets/logo.svg";
-
-// ─── YouTube helper ─────────────────────────────────────────────────
-function extractYTId(url) {
-  const m = url.match(
-    /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([A-Za-z0-9_-]{11})/
-  );
-  return m ? m[1] : null;
-}
-
-// ─── Brand tokens — sfondo bianco, accenti oro dal logo ─────────────
-const B = {
-  bg:          "#ffffff",
-  surface:     "#f8f8f6",
-  surfaceHigh: "#f0efeb",
-  border:      "#e0ddd4",
-  borderLight: "#ede9e0",
-  gold:        "#c89010",
-  goldHover:   "#a87200",
-  goldLight:   "#f5e0a0",
-  goldBg:      "#fdf8ee",
-  text:        "#1a1a14",
-  textMid:     "#4a4a3a",
-  muted:       "#9a9480",
-  danger:      "#c0392b",
-  dangerBg:    "#fdf0ee",
-  black:       "#0a0a08",
-};
-
-// ─── Fetch YouTube oEmbed ────────────────────────────────────────────
-async function fetchYTMeta(videoId) {
-  try {
-    const r = await fetch(
-      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
-    );
-    if (!r.ok) return null;
-    return await r.json();
-  } catch { return null; }
-}
-
-// ─── Reusable components ─────────────────────────────────────────────
-function Btn({ onClick, variant = "gold", disabled, children, style = {} }) {
-  const base = {
-    border: "none", cursor: disabled ? "not-allowed" : "pointer",
-    borderRadius: 7, fontWeight: 700, fontSize: 13,
-    padding: "9px 16px", transition: "all .15s",
-    opacity: disabled ? 0.38 : 1, whiteSpace: "nowrap",
-    fontFamily: "inherit",
-  };
-  const variants = {
-    gold:    { background: B.gold, color: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,.15)" },
-    ghost:   { background: B.surfaceHigh, color: B.text, border: `1px solid ${B.border}` },
-    danger:  { background: B.dangerBg, color: B.danger, border: `1px solid #e8b0a8` },
-    outline: { background: "#fff", color: B.gold, border: `1.5px solid ${B.gold}` },
-  };
-  return (
-    <button onClick={disabled ? undefined : onClick} style={{ ...base, ...variants[variant], ...style }}>
-      {children}
-    </button>
-  );
-}
-
-function Badge({ children, color = B.gold }) {
-  return (
-    <span style={{
-      display: "inline-block",
-      background: B.goldBg, color: B.gold,
-      border: `1px solid ${B.goldLight}`,
-      borderRadius: 4, fontSize: 11, fontWeight: 700,
-      padding: "2px 7px", letterSpacing: "0.04em",
-    }}>
-      {children}
-    </span>
-  );
-}
-
-function SectionLabel({ children }) {
-  return (
-    <div style={{
-      fontSize: 10, fontWeight: 800, letterSpacing: "0.14em",
-      textTransform: "uppercase", color: B.muted, marginBottom: 8,
-    }}>
-      {children}
-    </div>
-  );
-}
-
-function Divider({ style = {} }) {
-  return (
-    <div style={{
-      height: 1,
-      background: B.border,
-      ...style,
-    }} />
-  );
-}
-
-// ─── Logo component ──────────────────────────────────────────────────
-function DuoPiccheLogo({ size = 44 }) {
-  return (
-    <img
-      src={logoUrl}
-      alt="Duo di Picche"
-      style={{ width: size, height: size, objectFit: "contain", display: "block" }}
-    />
-  );
-}
+import { useState, useRef, useEffect, useCallback } from "react";
+import {
+  B, Btn, Badge, SectionLabel, Divider, DuoPiccheLogo,
+  extractYTId, fetchYTMeta, CHANNEL_NAME,
+} from "./shared";
 
 // ─── Main App ──────────────────────────────────────────────────────────
 export default function KaraokeDJ() {
   const [queue, setQueue] = useState([]);
   const [currentIdx, setCurrentIdx] = useState(null);
-  const [publicOpen, setPublicOpen] = useState(false);
   const [ytUrl, setYtUrl] = useState("");
   const [localFile, setLocalFile] = useState(null);
   const [localName, setLocalName] = useState("");
@@ -119,9 +15,11 @@ export default function KaraokeDJ() {
   const [addMode, setAddMode] = useState("youtube");
   const [isPlaying, setIsPlaying] = useState(false);
   const [addingMeta, setAddingMeta] = useState(false);
+  const [connectedScreens, setConnectedScreens] = useState(() => new Set());
 
   const fileInputRef = useRef(null);
   const previewVideoRef = useRef(null);
+  const channelRef = useRef(null);
 
   const currentSong = currentIdx !== null ? queue[currentIdx] : null;
 
@@ -129,23 +27,71 @@ export default function KaraokeDJ() {
     queue.forEach(s => s.type === "local" && URL.revokeObjectURL(s.src));
   }, []);
 
-  // Se l'utente esce dal fullscreen (es. tasto Esc), chiudi anche lo schermo pubblico
+  const playSong  = useCallback(idx => { setCurrentIdx(idx); setIsPlaying(true); }, []);
+  const playNext  = useCallback(() => {
+    setCurrentIdx(idx => {
+      if (idx === null) return idx;
+      const n = idx + 1;
+      if (n < queue.length) { setIsPlaying(true); return n; }
+      setIsPlaying(false);
+      return null;
+    });
+  }, [queue.length]);
+  const playPrev  = () => currentIdx > 0 && playSong(currentIdx - 1);
+
+  // ── Sincronizzazione con le finestre di schermo pubblico ──────────
+  // Ogni schermo pubblico aperto (uno per monitor esterno) si collega a
+  // questo canale, riceve lo stato corrente e segnala "ended" per i video
+  // locali quando finiscono, cosi la coda avanza da qui. Il canale viene
+  // creato una sola volta: playNext/broadcastState "attuali" sono letti
+  // da ref per evitare di riaprirlo ad ogni cambio di stato.
+  const playNextRef = useRef(playNext);
+  playNextRef.current = playNext;
+  const broadcastStateRef = useRef(() => {});
+
   useEffect(() => {
-    const onFsChange = () => {
-      if (!document.fullscreenElement) setPublicOpen(false);
+    const channel = new BroadcastChannel(CHANNEL_NAME);
+    channelRef.current = channel;
+
+    channel.onmessage = e => {
+      const msg = e.data;
+      if (msg.type === "hello") {
+        setConnectedScreens(s => new Set(s).add(msg.id));
+      } else if (msg.type === "bye") {
+        setConnectedScreens(s => { const n = new Set(s); n.delete(msg.id); return n; });
+      } else if (msg.type === "requestState") {
+        broadcastStateRef.current();
+      } else if (msg.type === "ended") {
+        playNextRef.current();
+      }
     };
-    document.addEventListener("fullscreenchange", onFsChange);
-    return () => document.removeEventListener("fullscreenchange", onFsChange);
+
+    return () => channel.close();
   }, []);
 
-  const openPublicScreen = () => {
-    setPublicOpen(true);
-    document.documentElement.requestFullscreen?.().catch(() => {});
-  };
+  const broadcastState = useCallback(() => {
+    const song = !currentSong ? null : currentSong.type === "youtube"
+      ? {
+          type: "youtube", videoId: currentSong.videoId,
+          title: currentSong.title, thumb: currentSong.thumb, artist: currentSong.artist,
+        }
+      : {
+          // il File è clonabile via structured clone: la finestra pubblica
+          // ricrea il proprio object URL, dato che quello locale non è
+          // valido in un'altra scheda del browser
+          type: "local", file: currentSong.file,
+          title: currentSong.title, thumb: currentSong.thumb, artist: currentSong.artist,
+        };
+    channelRef.current?.postMessage({ type: "state", song, isPlaying });
+  }, [currentSong, isPlaying]);
 
-  const closePublicScreen = () => {
-    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-    setPublicOpen(false);
+  broadcastStateRef.current = broadcastState;
+  useEffect(() => { broadcastState(); }, [broadcastState]);
+
+  const openPublicScreen = () => {
+    const url = new URL(window.location.href);
+    url.search = "?public=1";
+    window.open(url.toString(), "_blank", "noopener,noreferrer");
   };
 
   const handleAddYT = async () => {
@@ -175,21 +121,13 @@ export default function KaraokeDJ() {
     if (!localFile) return;
     const src = URL.createObjectURL(localFile);
     setQueue(q => [...q, {
-      id: Date.now(), type: "local", src,
+      id: Date.now(), type: "local", src, file: localFile,
       title: localName || localFile.name.replace(/\.[^.]+$/, ""),
       thumb: null, artist: "",
     }]);
     setLocalFile(null); setLocalName(""); setLocalObjectUrl(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
-
-  const playSong  = idx => { setCurrentIdx(idx); setIsPlaying(true); };
-  const playNext  = () => {
-    if (currentIdx === null) return;
-    const n = currentIdx + 1;
-    if (n < queue.length) playSong(n); else { setCurrentIdx(null); setIsPlaying(false); }
-  };
-  const playPrev  = () => currentIdx > 0 && playSong(currentIdx - 1);
 
   const removeFromQueue = id => {
     setQueue(q => {
@@ -225,131 +163,6 @@ export default function KaraokeDJ() {
     width: "100%", boxSizing: "border-box", fontFamily: "inherit",
   };
 
-  // ── Schermo pubblico ─────────────────────────────────────────────
-  const PublicScreen = () => (
-    <div style={{
-      position:"fixed", inset:0, background:"#0a0a08",
-      display:"flex", flexDirection:"column", zIndex:9999,
-    }}>
-      {/* Logo + nome */}
-      <div style={{
-        position:"absolute", top:0, left:0, right:0, zIndex:10,
-        display:"flex", alignItems:"center", justifyContent:"space-between",
-        padding:"14px 20px",
-        background: currentSong
-          ? "linear-gradient(to bottom, #000000cc, transparent)"
-          : "transparent",
-        pointerEvents:"none",
-      }}>
-        <div style={{
-          display:"flex", alignItems:"center", gap:14,
-          background: "#fff",
-          borderRadius: 14,
-          padding: "8px 18px 8px 8px",
-          boxShadow: "0 2px 10px rgba(0,0,0,.35)",
-        }}>
-          <DuoPiccheLogo size={48} />
-          <div>
-            <div style={{
-              fontSize: 20, fontWeight: 800, color: B.gold,
-              letterSpacing: "-0.01em",
-            }}>
-              Duo di Picche
-            </div>
-            <div style={{ fontSize: 11, color: B.muted, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-              Karaoke Night
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <button
-        onClick={closePublicScreen}
-        style={{
-          position:"absolute", top:14, right:16, zIndex:20,
-          background:"#ffffff15", border:`1px solid #ffffff22`,
-          color:"#fff", borderRadius:6, padding:"7px 14px",
-          fontSize:12, cursor:"pointer", fontFamily:"inherit",
-        }}
-      >
-        ← Chiudi
-      </button>
-
-      {currentSong ? (
-        <div style={{ width:"100%", height:"100%", position:"relative" }}>
-          {currentSong.type === "youtube" ? (
-            <iframe
-              key={currentSong.videoId + String(isPlaying)}
-              src={`https://www.youtube.com/embed/${currentSong.videoId}?autoplay=${isPlaying?1:0}&controls=0&modestbranding=1&rel=0&fs=0`}
-              style={{ width:"100%", height:"100%", border:"none" }}
-              allow="autoplay; encrypted-media"
-              allowFullScreen
-            />
-          ) : (
-            <video
-              src={currentSong.src}
-              style={{ width:"100%", height:"100%", objectFit:"contain" }}
-              autoPlay={isPlaying} controls={false}
-              onEnded={playNext}
-            />
-          )}
-          <div style={{
-            position:"absolute", bottom:0, left:0, right:0,
-            padding:"20px 24px",
-            background:"linear-gradient(to top, #000000ee 0%, #00000055 60%, transparent 100%)",
-            display:"flex", alignItems:"flex-end", gap:14,
-            pointerEvents:"none",
-          }}>
-            {currentSong.thumb && (
-              <img src={currentSong.thumb}
-                style={{ width:72, height:50, borderRadius:6, objectFit:"cover",
-                         border:"2px solid #e0a02066" }}
-                alt=""
-              />
-            )}
-            <div style={{ flex:1 }}>
-              <div style={{ fontSize:26, fontWeight:800, color:"#fff",
-                            textShadow:"0 2px 12px #000c", lineHeight:1.2 }}>
-                {currentSong.title}
-              </div>
-              {currentSong.artist && (
-                <div style={{ fontSize:15, color:"#e0a020", marginTop:4 }}>
-                  {currentSong.artist}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div style={{ flex:1, display:"flex", flexDirection:"column",
-                      alignItems:"center", justifyContent:"center", gap:24 }}>
-          <div style={{
-            background: "#fff",
-            borderRadius: 20,
-            padding: 20,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}>
-            <DuoPiccheLogo size={140} />
-          </div>
-          <div style={{ textAlign:"center" }}>
-            <div style={{
-              fontSize:34, fontWeight:800, color:"#e0a020",
-              textShadow:"0 0 40px #e0a02044",
-            }}>
-              Duo di Picche
-            </div>
-            <div style={{ fontSize:14, color:"#ffffff33", marginTop:6,
-                          letterSpacing:"0.15em", textTransform:"uppercase" }}>
-              Karaoke Night · In attesa…
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-
   // ── DJ Panel ──────────────────────────────────────────────────────
   return (
     <div style={{
@@ -357,8 +170,6 @@ export default function KaraokeDJ() {
       background: B.bg, color: B.text,
       minHeight: "100vh", display: "flex", flexDirection: "column",
     }}>
-      {publicOpen && <PublicScreen />}
-
       {/* TOP BAR */}
       <div style={{
         background: B.bg,
@@ -385,8 +196,13 @@ export default function KaraokeDJ() {
               ▶ {currentSong.title.slice(0,30)}{currentSong.title.length>30?"…":""}
             </Badge>
           )}
+          {connectedScreens.size > 0 && (
+            <Badge>
+              🖥 {connectedScreens.size} {connectedScreens.size===1?"schermo collegato":"schermi collegati"}
+            </Badge>
+          )}
           <Btn onClick={openPublicScreen}>
-            📺 Schermo pubblico
+            📺 Apri schermo pubblico
           </Btn>
         </div>
       </div>
