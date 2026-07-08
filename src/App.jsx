@@ -222,17 +222,18 @@ export default function KaraokeDJ() {
           : "transparent",
         pointerEvents:"none",
       }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          {/* Logo bianco su nero */}
+        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+          {/* Logo su sfondo bianco, ben in risalto sul gradiente scuro */}
           <div style={{
             background: "#fff",
-            borderRadius: 10,
-            padding: 4,
+            borderRadius: 14,
+            padding: "10px 14px",
+            boxShadow: "0 2px 10px rgba(0,0,0,.35)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
           }}>
-            <DuoPiccheLogo size={44} />
+            <DuoPiccheLogo size={56} />
           </div>
           <div>
             <div style={{
