@@ -129,6 +129,25 @@ export default function KaraokeDJ() {
     queue.forEach(s => s.type === "local" && URL.revokeObjectURL(s.src));
   }, []);
 
+  // Se l'utente esce dal fullscreen (es. tasto Esc), chiudi anche lo schermo pubblico
+  useEffect(() => {
+    const onFsChange = () => {
+      if (!document.fullscreenElement) setPublicOpen(false);
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
+  const openPublicScreen = () => {
+    setPublicOpen(true);
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  };
+
+  const closePublicScreen = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    setPublicOpen(false);
+  };
+
   const handleAddYT = async () => {
     const id = extractYTId(ytUrl.trim());
     if (!id) return alert("Link YouTube non valido");
@@ -245,7 +264,7 @@ export default function KaraokeDJ() {
       </div>
 
       <button
-        onClick={() => setPublicOpen(false)}
+        onClick={closePublicScreen}
         style={{
           position:"absolute", top:14, right:16, zIndex:20,
           background:"#ffffff15", border:`1px solid #ffffff22`,
@@ -366,7 +385,7 @@ export default function KaraokeDJ() {
               ▶ {currentSong.title.slice(0,30)}{currentSong.title.length>30?"…":""}
             </Badge>
           )}
-          <Btn onClick={() => setPublicOpen(true)}>
+          <Btn onClick={openPublicScreen}>
             📺 Schermo pubblico
           </Btn>
         </div>
